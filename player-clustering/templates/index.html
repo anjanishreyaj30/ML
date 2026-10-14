@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Player Clustering · K-Means vs Hierarchical</title>
+<style>
+:root{
+  --bg:#14100d; --panel:#1d1613; --panel-2:#251c17; --panel-3:#2e231c;
+  --border:#3a2c24; --border-soft:#2b211b;
+  --text:#f3eae2; --muted:#9c8878; --text-dim:#cbb9ab;
+  --accent:#c9714a; --accent-2:#e8a86b; --accent-soft:rgba(201,113,74,.14);
+  --green:#63c08a; --amber:#e5b45a; --red:#e2705f;
+  --shadow:0 18px 40px -18px rgba(0,0,0,.75);
+}
+[data-theme="light"]{
+  --bg:#f7f3ee; --panel:#fff; --panel-2:#fbf7f3; --panel-3:#f2eae2;
+  --border:#e3d7cb; --border-soft:#eee4da; --text:#2b201a; --muted:#87735f;
+  --text-dim:#4d3d33; --accent:#b85c38; --accent-2:#a85a2e; --accent-soft:rgba(184,92,56,.10);
+  --green:#2f9e63; --amber:#c08a1e; --red:#c9503f;
+  --shadow:0 18px 40px -22px rgba(90,60,35,.35);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  background:var(--bg); color:var(--text); font-size:14px; line-height:1.55;
+  transition:background-color .2s,color .2s;
+}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:20px;border:3px solid var(--bg)}
+
+.app{display:flex;min-height:100vh}
+.sidebar{
+  width:250px;flex:0 0 250px;background:var(--panel);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;position:sticky;top:0;height:100vh;
+}
+.brand{padding:20px 18px;border-bottom:1px solid var(--border-soft);display:flex;gap:12px;align-items:center}
+.brand-mark{width:40px;height:40px;border-radius:11px;background:linear-gradient(145deg,var(--accent),#8f4a2c);display:grid;place-items:center;font-size:20px}
+.brand-text h1{font-size:13.5px;font-weight:700;line-height:1.2}
+.brand-text span{font-size:10.5px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase}
+.nav{padding:12px;flex:1;overflow-y:auto}
+.nav-label{font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);padding:12px 10px 6px;font-weight:600}
+.nav-item{
+  display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:9px;
+  color:var(--text-dim);cursor:pointer;font-size:13.5px;font-weight:500;
+  transition:background .15s,color .15s;margin-bottom:2px;
+}
+.nav-item:hover{background:var(--panel-2);color:var(--text)}
+.nav-item.active{background:var(--accent-soft);color:var(--accent-2)}
+.nav-item.locked{opacity:.4;cursor:not-allowed}
+.nav-item.locked:hover{background:none;color:var(--text-dim)}
+.side-foot{padding:14px 16px;border-top:1px solid var(--border-soft);font-size:11px;color:var(--muted);line-height:1.6}
+
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{
+  height:64px;display:flex;align-items:center;gap:16px;padding:0 26px;
+  border-bottom:1px solid var(--border);position:sticky;top:0;z-index:30;
+  background:var(--panel);
+}
+.topbar h2{font-size:16px;font-weight:650}
+.topbar .crumb{font-size:11.5px;color:var(--muted);margin-top:-2px}
+.topbar-actions{margin-left:auto;display:flex;align-items:center;gap:10px}
+input[type=text],input[type=file],input[type=number],select{
+  background:var(--panel-2);border:1px solid var(--border);color:var(--text);
+  border-radius:9px;padding:8px 12px;font-size:13px;font-family:inherit;outline:none;
+  transition:border-color .15s,box-shadow .15s;
+}
+input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+select{cursor:pointer}
+.search{padding:7px 12px;width:220px}
+.search::placeholder{color:var(--muted)}
+
+.btn{
+  display:inline-flex;align-items:center;gap:8px;border-radius:9px;padding:8px 15px;
+  font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;
+  border:1px solid var(--border);background:var(--panel-2);color:var(--text);
+  transition:all .15s;
+}
+.btn:hover:not(:disabled){background:var(--panel-3)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.primary{background:linear-gradient(140deg,var(--accent),#9c5230);border-color:transparent;color:#fff}
+.btn.primary:hover:not(:disabled){filter:brightness(1.08)}
+.btn.icon{padding:8px;width:38px;height:38px;justify-content:center}
+
+.views{padding:26px;flex:1;max-width:1400px;width:100%;margin:0 auto}
+.view{display:none}
+.view.active{display:block;animation:fade .22s ease}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.grid{display:grid;gap:16px}
+.g-4{grid-template-columns:repeat(4,1fr)}
+.g-3{grid-template-columns:repeat(3,1fr)}
+.g-2{grid-template-columns:repeat(2,1fr)}
+@media(max-width:1000px){.g-4{grid-template-columns:repeat(2,1fr)}.g-3,.g-2{grid-template-columns:1fr}}
+@media(max-width:640px){.g-4{grid-template-columns:1fr}}
+
+.card{background:var(--panel);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow);overflow:hidden}
+.card-head{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--border-soft);flex-wrap:wrap}
+.card-head h3{font-size:13.5px;font-weight:650}
+.card-head .sub{font-size:11.5px;color:var(--muted)}
+.card-head .right{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.card-body{padding:18px}
+
+.kpi{padding:18px;position:relative;overflow:hidden}
+.kpi::after{content:"";position:absolute;right:-30px;top:-30px;width:100px;height:100px;border-radius:50%;background:var(--accent-soft);pointer-events:none}
+.kpi-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;font-weight:600;margin-bottom:8px}
+.kpi-value{font-size:28px;font-weight:700;letter-spacing:-.5px;line-height:1.1;font-variant-numeric:tabular-nums}
+.kpi-foot{font-size:11.5px;color:var(--muted);margin-top:6px}
+
+.table-wrap{overflow:auto;max-height:560px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{
+  text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.9px;
+  color:var(--muted);font-weight:700;padding:10px 14px;border-bottom:1px solid var(--border);
+  white-space:nowrap;background:var(--panel-2);position:sticky;top:0;z-index:1;
+}
+tbody td{padding:10px 14px;border-bottom:1px solid var(--border-soft)}
+tbody tr:hover{background:var(--panel-2)}
+tbody tr:last-child td{border-bottom:none}
+.mono{font-family:ui-monospace,"SF Mono",Consolas,monospace;font-size:12px}
+
+.chip{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:650;border:1px solid transparent;white-space:nowrap}
+.chip.neutral{background:var(--panel-3);color:var(--text-dim);border-color:var(--border)}
+
+.chart-frame{background:var(--panel-2);border:1px solid var(--border);border-radius:9px;padding:8px;text-align:center}
+.chart-frame img{width:100%;height:auto;border-radius:6px;display:block;background:#fff}
+
+.stat-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed var(--border-soft);font-size:12.5px}
+.stat-row:last-child{border-bottom:none}
+.stat-row span{color:var(--muted)}
+.stat-row b{font-weight:650;font-variant-numeric:tabular-nums}
+
+.empty{color:var(--muted);text-align:center;padding:36px 20px;font-size:13px}
+
+.note{
+  display:flex;gap:10px;align-items:flex-start;
+  background:var(--accent-soft);border:1px solid rgba(201,113,74,.25);
+  border-radius:9px;padding:12px 14px;font-size:12.5px;color:var(--text-dim);margin-bottom:16px;line-height:1.7;
+}
+
+.bar-track{height:8px;background:var(--panel-3);border-radius:20px;overflow:hidden}
+.bar-fill{height:100%;border-radius:20px;transition:width .5s ease}
+
+.toast-wrap{position:fixed;bottom:22px;right:22px;z-index:500;display:flex;flex-direction:column;gap:10px}
+.toast{
+  background:var(--panel-3);border:1px solid var(--border);border-left:3px solid var(--accent);
+  border-radius:9px;padding:12px 16px;font-size:13px;min-width:240px;
+  box-shadow:var(--shadow);animation:slide .25s ease;
+}
+.toast.ok{border-left-color:var(--green)}
+.toast.err{border-left-color:var(--red)}
+@keyframes slide{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:none}}
+.toast strong{display:block;font-size:12.5px;margin-bottom:2px}
+.toast span{color:var(--muted);font-size:12px}
+
+.loading{position:fixed;inset:0;background:rgba(10,7,5,.7);backdrop-filter:blur(4px);display:none;place-items:center;z-index:400}
+.loading.on{display:grid}
+.spinner{width:48px;height:48px;border-radius:50%;border:4px solid var(--panel-3);border-top-color:var(--accent);animation:spin .9s linear infinite;margin:0 auto 14px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{text-align:center;color:#fff;font-size:13px}
+.loading-text strong{display:block;font-size:14px;margin-bottom:4px}
+@media(max-width:760px){
+  .app{display:block}
+  .sidebar{position:relative;top:auto;width:100%;height:auto;border-right:0;border-bottom:1px solid var(--border)}
+  .brand{padding:10px 14px}
+  .brand-mark{width:34px;height:34px}
+  .nav{display:flex;gap:4px;padding:7px 10px;overflow-x:auto;overflow-y:hidden}
+  .nav-label{display:none}
+  .nav-item{flex:0 0 auto;white-space:nowrap;margin:0;padding:8px 10px;font-size:12px}
+  .side-foot{display:none}
+  .topbar{height:auto;min-height:58px;padding:9px 14px}
+  .views{padding:14px}
+}
+@media(max-width:460px){
+  .topbar{gap:8px}
+  .topbar-actions{gap:6px}
+  .topbar-actions .btn{padding:7px 9px;font-size:11px}
+  .topbar-actions .btn.icon{width:34px;height:34px}
+  .views{padding:10px}
+  .card-head{gap:8px;padding:12px}
+  .card-body{padding:13px}
+  .card-head .right{width:100%;margin-left:0}
+}
+</style>
+</head>
+<body>
+
+<div class="loading" id="loading">
+  <div>
+    <div class="spinner"></div>
+    <div class="loading-text"><strong>Running ML pipeline…</strong><span id="loadingMsg">This takes 3–5 seconds</span></div>
+  </div>
+</div>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">🏏</div>
+      <div class="brand-text">
+        <h1>Player Clustering</h1>
+        <span>K-Means · Hierarchical</span>
+      </div>
+    </div>
+    <nav class="nav">
+      <div class="nav-label">Analysis</div>
+      <div class="nav-item active" data-view="dashboard">📊 Dashboard</div>
+      <div class="nav-item" data-view="data">📁 Data Source</div>
+      <div class="nav-item locked" data-view="preprocess">⚙️ Preprocessing</div>
+      <div class="nav-item locked" data-view="kmeans">🎯 K-Means</div>
+      <div class="nav-item locked" data-view="hier">🌳 Hierarchical</div>
+      <div class="nav-item locked" data-view="compare">⚖️ Compare</div>
+      <div class="nav-item locked" data-view="registry">👥 Clustered Players</div>
+      <div class="nav-label">Info</div>
+      <div class="nav-item" data-view="about">ℹ️ About &amp; Methods</div>
+    </nav>
+    <div class="side-foot">
+      <strong style="color:var(--text-dim)">BTech CSE · 2nd Year</strong><br>
+      ML Course Project
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div>
+        <h2 id="pageTitle">Dashboard</h2>
+        <div class="crumb" id="pageCrumb">Cluster cricket players by performance using ML</div>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn icon" id="themeToggle" title="Toggle theme">🌙</button>
+        <button class="btn primary" id="runAnalysis" disabled>▶ Run Analysis</button>
+      </div>
+    </header>
+
+    <div class="views">
+
+      <!-- DASHBOARD -->
+      <section class="view active" id="view-dashboard">
+        <div class="grid g-4" style="margin-bottom:16px">
+          <div class="card kpi"><div class="kpi-label">Players Loaded</div><div class="kpi-value" id="kpiPlayers">0</div><div class="kpi-foot" id="kpiPlayersFoot">Load a dataset to begin</div></div>
+          <div class="card kpi"><div class="kpi-label">Clusters (k)</div><div class="kpi-value" id="kpiK">—</div><div class="kpi-foot" id="kpiKFoot">Run analysis to detect</div></div>
+          <div class="card kpi"><div class="kpi-label">K-Means Silhouette</div><div class="kpi-value" id="kpiSil">—</div><div class="kpi-foot">At selected k; higher is better</div></div>
+          <div class="card kpi"><div class="kpi-label">Method Agreement</div><div class="kpi-value" id="kpiAri">—</div><div class="kpi-foot">Adjusted Rand Index</div></div>
+        </div>
+        <div class="card" id="dashSummaryCard">
+          <div class="card-head"><h3>Summary</h3><div class="right"><span class="chip neutral" id="dashChip">No data</span></div></div>
+          <div class="card-body" id="dashSummary">
+            <div class="empty">Go to <b>Data Source</b> to upload a CSV or generate a sample dataset.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- DATA SOURCE -->
+      <section class="view" id="view-data">
+        <div class="note">
+          <span>💡</span>
+          <div>Upload a CSV with columns <code>Player, Matches, Runs, BattingAverage, StrikeRate, Wickets, EconomyRate</code>, or click <b>Generate Sample Dataset</b> for 100 synthetic players.</div>
+        </div>
+        <div class="grid g-2" style="margin-bottom:16px">
+          <div class="card">
+            <div class="card-head"><h3>Upload CSV</h3></div>
+            <div class="card-body">
+              <input type="file" id="fileInput" accept=".csv" style="width:100%;margin-bottom:12px">
+              <button class="btn primary" id="btnUpload" style="width:100%">⬆ Upload CSV</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Sample Dataset</h3></div>
+            <div class="card-body">
+              <p style="font-size:12.5px;color:var(--muted);margin-bottom:12px">100 synthetic players — mix of batters, bowlers, all-rounders. Includes duplicates and missing values so cleaning is meaningful.</p>
+              <button class="btn" id="btnSample" style="width:100%;border-color:var(--green);color:var(--green)">✨ Generate Sample Dataset</button>
+            </div>
+          </div>
+        </div>
+        <div class="card" id="previewCard" style="display:none">
+          <div class="card-head">
+            <h3>Data Preview</h3>
+            <div class="sub" id="previewSubtitle">—</div>
+            <div class="right">
+              <span class="chip neutral" id="statShape">—</span>
+              <span class="chip neutral" id="statMissing">—</span>
+              <div style="display:flex;align-items:center;gap:8px;margin-left:8px">
+                <label style="font-size:12px;color:var(--muted)">k =</label>
+                <input type="number" id="kInput" value="4" min="2" max="10" style="width:70px">
+              </div>
+              <button class="btn primary" id="btnRunInline">▶ Run Analysis</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table><thead><tr id="previewHead"></tr></thead><tbody id="previewBody"></tbody></table>
+          </div>
+        </div>
+      </section>
+
+      <!-- PREPROCESSING -->
+      <section class="view" id="view-preprocess">
+        <div class="note">
+          <span>💡</span>
+          <div><b>Why clean &amp; scale?</b> K-Means and Ward linkage use Euclidean distance. Without scaling, <em>Runs</em> (hundreds) dominates <em>EconomyRate</em> (single digits). Median is preferred over mean for imputation because star players skew the mean upward.</div>
+        </div>
+        <div class="grid g-2">
+          <div class="card">
+            <div class="card-head"><h3>Cleaning Report</h3></div>
+            <div class="card-body" id="cleanReport"><div class="empty">Run analysis to see the report.</div></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Feature Scaling (StandardScaler)</h3></div>
+            <div class="card-body" id="scaleReport"><div class="empty">Run analysis to see the table.</div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- K-MEANS -->
+      <section class="view" id="view-kmeans">
+        <div class="grid g-2" style="margin-bottom:16px">
+          <div class="card">
+            <div class="card-head"><h3>Elbow &amp; Silhouette</h3><div class="sub" id="recommendedK">Choose k by inspecting inertia and separation</div><div class="right"><button class="btn" id="useRecommendedK" disabled>Use suggested k</button></div></div>
+            <div class="card-body"><div class="chart-frame" id="elbowFrame"><div class="empty">Run analysis to generate charts.</div></div></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Cluster Profiles</h3></div>
+            <div class="card-body" style="padding:0" id="kmProfile"><div class="empty">Run analysis to see profiles.</div></div>
+          </div>
+        </div>
+        <div class="grid g-3">
+          <div class="card kpi"><div class="kpi-label">Inertia</div><div class="kpi-value" id="kmInertia">—</div><div class="kpi-foot">Within-cluster sum of squares</div></div>
+          <div class="card kpi"><div class="kpi-label">Silhouette Score</div><div class="kpi-value" id="kmSil">—</div><div class="kpi-foot">Higher is better</div></div>
+          <div class="card kpi"><div class="kpi-label">Clustered</div><div class="kpi-value" id="kmSize">—</div><div class="kpi-foot">Rows used in the model</div></div>
+        </div>
+      </section>
+
+      <!-- HIERARCHICAL -->
+      <section class="view" id="view-hier">
+        <div class="grid g-2" style="margin-bottom:16px">
+          <div class="card">
+            <div class="card-head"><h3>Dendrogram — Ward Linkage</h3><div class="sub">Red line shows where we cut</div></div>
+            <div class="card-body"><div class="chart-frame" id="dendroFrame"><div class="empty">Run analysis to generate the tree.</div></div></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Cluster Profiles</h3></div>
+            <div class="card-body" style="padding:0" id="hierProfile"><div class="empty">Run analysis to see profiles.</div></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Why Ward Linkage?</h3></div>
+          <div class="card-body" style="color:var(--text-dim);font-size:13.5px;line-height:1.8">
+            Agglomerative clustering starts with each player as its own cluster. At every step, Ward linkage merges the two clusters that increase total within-cluster variance the least. This produces compact, roughly equal-sized clusters — a fair match for K-Means, so comparing them is meaningful.
+          </div>
+        </div>
+      </section>
+
+      <!-- COMPARE -->
+      <section class="view" id="view-compare">
+        <div class="grid g-2" style="margin-bottom:16px">
+          <div class="card">
+            <div class="card-head"><h3>PCA 2D Scatter</h3><div class="sub">6 features compressed to 2</div></div>
+            <div class="card-body"><div class="chart-frame" id="pcaFrame"><div class="empty">Run analysis to compare.</div></div></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Agreement (ARI)</h3></div>
+            <div class="card-body">
+              <div style="text-align:center;padding:16px 0">
+                <div id="ariBig" style="font-size:52px;font-weight:700;color:var(--accent-2);font-variant-numeric:tabular-nums;letter-spacing:-1.5px">—</div>
+                <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-top:4px">Adjusted Rand Index</div>
+              </div>
+              <div id="ariSentence" style="font-size:12.5px;color:var(--text-dim);line-height:1.7;margin-top:12px;padding-top:12px;border-top:1px solid var(--border-soft)">Run analysis to compare the two methods.</div>
+              <div style="margin-top:14px">
+                <div class="stat-row"><span>K-Means inertia</span><b id="ariKmInertia">—</b></div>
+                <div class="stat-row"><span>K-Means silhouette</span><b id="ariKmSil">—</b></div>
+                <div class="stat-row"><span>Hierarchical silhouette</span><b id="ariHcSil">—</b></div>
+                <div class="stat-row"><span>K-Means Davies–Bouldin (lower is better)</span><b id="ariKmDb">—</b></div>
+                <div class="stat-row"><span>Ward Davies–Bouldin (lower is better)</span><b id="ariHcDb">—</b></div>
+                <div class="stat-row"><span>K-Means Calinski–Harabasz (higher is better)</span><b id="ariKmCh">—</b></div>
+                <div class="stat-row"><span>Ward Calinski–Harabasz (higher is better)</span><b id="ariHcCh">—</b></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Auto Labels &amp; Logic</h3></div>
+          <div class="card-body" id="labelLogic"><div class="empty">Run analysis to see label logic.</div></div>
+        </div>
+      </section>
+
+      <!-- REGISTRY -->
+      <section class="view" id="view-registry">
+        <div class="card">
+          <div class="card-head">
+            <h3>Clustered Players</h3>
+            <div class="sub" id="registrySubtitle">—</div>
+            <div class="right">
+              <select id="filterKm" style="width:auto"><option value="">All K-Means labels</option></select>
+              <select id="filterHc" style="width:auto"><option value="">All Hierarchical labels</option></select>
+              <input type="text" id="filterText" placeholder="Search player…" style="width:auto;min-width:180px">
+              <a class="btn primary" id="downloadLink" href="/download">⬇ Download CSV</a>
+            </div>
+          </div>
+          <div class="table-wrap" id="registryWrap">
+            <table><thead><tr id="regHead"></tr></thead><tbody id="regBody"><tr><td><div class="empty">Run analysis to see the full dataset.</div></td></tr></tbody></table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ABOUT -->
+      <section class="view" id="view-about">
+        <div class="grid g-2" style="margin-bottom:16px">
+          <div class="card">
+            <div class="card-head"><h3>Problem Statement</h3></div>
+            <div class="card-body" style="color:var(--text-dim);font-size:13.5px;line-height:1.8">
+              Coaches need to group cricket players by performance to pick teams, plan training, and spot players who need improvement. This project uses two unsupervised ML algorithms — K-Means and Ward Hierarchical clustering — to discover natural groupings and lets you compare them.
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Objectives</h3></div>
+            <div class="card-body">
+              <div class="stat-row"><span>Clean &amp; scale player data</span><b>StandardScaler</b></div>
+              <div class="stat-row"><span>Choose k sensibly</span><b>Elbow + Silhouette</b></div>
+              <div class="stat-row"><span>Run K-Means</span><b>Centroid clustering</b></div>
+              <div class="stat-row"><span>Run Ward Hierarchical</span><b>Dendrogram-based</b></div>
+              <div class="stat-row"><span>Compare the two</span><b>PCA + ARI</b></div>
+              <div class="stat-row"><span>Auto-label clusters</span><b>Rule-based on centroids</b></div>
+              <div class="stat-row"><span>Export results</span><b>CSV download</b></div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>ML Concepts Demonstrated</h3></div>
+          <div class="card-body">
+            <div class="grid g-3">
+              <div class="stat-row" style="flex-direction:column;align-items:flex-start;border:none"><b>StandardScaler</b><span>Mean-0, std-1 normalisation so all features contribute equally to distance.</span></div>
+              <div class="stat-row" style="flex-direction:column;align-items:flex-start;border:none"><b>K-Means</b><span>Minimises inertia by alternating assignment and centroid update.</span></div>
+              <div class="stat-row" style="flex-direction:column;align-items:flex-start;border:none"><b>Ward Linkage</b><span>Merges clusters to minimise growth in within-cluster variance.</span></div>
+              <div class="stat-row" style="flex-direction:column;align-items:flex-start;border:none"><b>Elbow + Silhouette</b><span>Two complementary heuristics for choosing k.</span></div>
+              <div class="stat-row" style="flex-direction:column;align-items:flex-start;border:none"><b>PCA</b><span>Projects 6 features to 2 components for visualisation.</span></div>
+              <div class="stat-row" style="flex-direction:column;align-items:flex-start;border:none"><b>Adjusted Rand Index</b><span>Agreement between two labellings, corrected for chance.</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+
+<script>
+/* ============================================================================
+   STATE
+   ============================================================================ */
+const state = {
+  preview: null,
+  result: null,
+  filters: { km:'', hc:'', text:'' }
+};
+
+const COLORS = ['#c9714a','#63c08a','#6fa8dc','#e5b45a','#a98bd8','#e2705f','#4fb3a8','#d98cc0'];
+const FEATS = ['Matches','Runs','BattingAverage','StrikeRate','Wickets','EconomyRate'];
+
+/* ============================================================================
+   HELPERS
+   ============================================================================ */
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+
+function esc(v){
+  if(v===null||v===undefined) return '—';
+  return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function num(v,d=2){
+  if(v===null||v===undefined||v==='') return '—';
+  const n = Number(v);
+  return isNaN(n) ? esc(v) : n.toFixed(d);
+}
+function score(v,d=3){
+  return v===null||v===undefined||!Number.isFinite(Number(v)) ? 'N/A' : Number(v).toFixed(d);
+}
+function toast(type,title,msg){
+  const el = document.createElement('div');
+  el.className = 'toast '+type;
+  el.innerHTML = `<strong>${esc(title)}</strong><span>${esc(msg)}</span>`;
+  $('#toasts').appendChild(el);
+  setTimeout(()=>{
+    el.style.transition='opacity .3s,transform .3s';
+    el.style.opacity='0'; el.style.transform='translateX(30px)';
+    setTimeout(()=>el.remove(),320);
+  }, 3400);
+}
+function loading(on,msg){
+  $('#loading').classList.toggle('on',on);
+  if(msg) $('#loadingMsg').textContent = msg;
+}
+
+/* ============================================================================
+   NAVIGATION
+   ============================================================================ */
+const VIEW_META = {
+  dashboard: ['Dashboard','Cluster cricket players by performance using ML'],
+  data:      ['Data Source','Upload a CSV or generate a sample dataset'],
+  preprocess:['Preprocessing','Cleaning, imputation, feature scaling'],
+  kmeans:    ['K-Means Clustering','Elbow method, silhouette, cluster profiles'],
+  hier:      ['Hierarchical Clustering','Dendrogram with Ward linkage'],
+  compare:   ['Comparison','PCA scatter + Adjusted Rand Index'],
+  registry:  ['Clustered Players','Full dataset with cluster assignments'],
+  about:     ['About & Methods','ML concepts demonstrated']
+};
+
+function go(view){
+  const item = $(`.nav-item[data-view="${view}"]`);
+  if(item && item.classList.contains('locked')) return;
+
+  $$('.view').forEach(v=>v.classList.remove('active'));
+  const t = $('#view-'+view);
+  if(t) t.classList.add('active');
+
+  $$('.nav-item').forEach(n=>n.classList.toggle('active', n.dataset.view===view));
+
+  const [title,crumb] = VIEW_META[view] || ['',''];
+  $('#pageTitle').textContent = title;
+  $('#pageCrumb').textContent = crumb;
+}
+
+$$('.nav-item').forEach(item=>{
+  item.addEventListener('click', ()=>go(item.dataset.view));
+});
+
+/* Theme toggle */
+$('#themeToggle').addEventListener('click', ()=>{
+  const next = document.documentElement.dataset.theme==='dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  $('#themeToggle').textContent = next==='dark' ? '🌙' : '☀️';
+  // Re-render charts since they're static PNGs (no re-render needed actually)
+});
+
+/* ============================================================================
+   DATA LOADING
+   ============================================================================ */
+$('#btnSample').addEventListener('click', async ()=>{
+  loading(true,'Generating 100 synthetic players');
+  try{
+    const r = await fetch('/api/sample',{method:'POST'});
+    const d = await r.json();
+    loading(false);
+    if(!r.ok){ toast('err','Sample failed', d.error||'Unknown error'); return; }
+    onDataLoaded(d, 'Sample dataset of 100 players loaded.');
+  }catch(e){ loading(false); toast('err','Network error',e.message); }
+});
+
+$('#btnUpload').addEventListener('click', async ()=>{
+  const inp = $('#fileInput');
+  if(!inp.files || !inp.files.length){ toast('err','No file','Please choose a CSV file first.'); return; }
+  const fd = new FormData();
+  fd.append('file', inp.files[0]);
+  loading(true,'Uploading CSV');
+  try{
+    const r = await fetch('/api/upload',{method:'POST',body:fd});
+    const d = await r.json();
+    loading(false);
+    if(!r.ok){ toast('err','Upload failed', d.error||'Unknown error'); return; }
+    onDataLoaded(d,'CSV uploaded successfully.');
+  }catch(e){ loading(false); toast('err','Network error',e.message); }
+});
+
+function onDataLoaded(d,msg){
+  state.preview = d;
+  toast('ok','Data ready',msg);
+
+  $('#statShape').textContent = `${d.shape[0]} rows × ${d.shape[1]} cols`;
+  $('#statMissing').textContent = `${d.total_missing} missing`;
+  $('#previewSubtitle').textContent = `First ${d.preview.length} rows`;
+  renderPreview();
+  $('#previewCard').style.display = '';
+  $('#kInput').max = Math.min(10, Math.max(2, d.shape[0] - 1));
+  $('#kInput').value = Math.min(Number($('#kInput').value) || 4, Number($('#kInput').max));
+  $('#runAnalysis').disabled = false;
+  $('#kpiPlayers').textContent = d.shape[0];
+  $('#kpiPlayersFoot').textContent = 'Rows in loaded dataset';
+  $('#dashChip').textContent = `${d.shape[0]} rows loaded`;
+  $('#dashSummary').innerHTML = `<div class="empty">Data ready. Go to <b>Data Source</b> and click <b>Run Analysis</b>, or click the button in the top right.</div>`;
+
+  go('data');
+}
+
+function renderPreview(){
+  const d = state.preview;
+  if(!d || !d.preview) return;
+  const cols = Object.keys(d.preview[0] || {});
+  $('#previewHead').innerHTML = cols.map(c=>`<th>${esc(c)}</th>`).join('');
+  $('#previewBody').innerHTML = d.preview.map(row=>`
+    <tr>${cols.map(c=>{
+      const v = row[c];
+      const isNum = typeof v==='number' || (typeof v==='string' && v!=='' && !isNaN(v));
+      return `<td class="${isNum?'mono':''}">${esc(v)}</td>`;
+    }).join('')}</tr>
+  `).join('');
+}
+
+/* ============================================================================
+   RUN ANALYSIS
+   ============================================================================ */
+$('#runAnalysis').addEventListener('click', runAnalysis);
+$('#btnRunInline').addEventListener('click', runAnalysis);
+$('#useRecommendedK').addEventListener('click', ()=>{
+  const recommended = state.result?.elbow_data?.recommended_k;
+  if(!recommended) return;
+  $('#kInput').value = recommended;
+  runAnalysis();
+});
+
+async function runAnalysis(){
+  if(!state.preview){ toast('err','No data','Load a dataset first.'); return; }
+  const k = Math.max(2, Math.min(Number($('#kInput').max) || 10, parseInt($('#kInput').value,10)||4));
+  $('#kInput').value = k;
+
+  loading(true,'Running clustering…');
+  try{
+    const r = await fetch('/api/analyze',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({k})
+    });
+    const d = await r.json();
+    loading(false);
+    if(!r.ok){ toast('err','Analysis failed', d.error||'Unknown error'); return; }
+
+    state.result = d;
+    renderAll(d);
+    toast('ok','Analysis complete', `k=${d.k_used} · ${d.rows_used} players clustered.`);
+    go('preprocess');
+  }catch(e){ loading(false); toast('err','Network error',e.message); }
+}
+
+/* ============================================================================
+   MASTER RENDER
+   ============================================================================ */
+function renderAll(d){
+  unlockViews();
+  renderDashboard(d);
+  renderPreprocess(d);
+  renderKMeans(d);
+  renderHier(d);
+  renderCompare(d);
+  renderRegistry(d);
+}
+
+function unlockViews(){
+  $$('.nav-item.locked').forEach(n=>n.classList.remove('locked'));
+}
+
+/* ---- DASHBOARD ---- */
+function renderDashboard(d){
+  $('#kpiPlayers').textContent = d.rows_used;
+  $('#kpiPlayersFoot').textContent = 'Players clustered';
+  $('#kpiK').textContent = d.k_used;
+  $('#kpiKFoot').textContent = d.elbow_data.recommended_k
+    ? `Selected; silhouette suggests k=${d.elbow_data.recommended_k}`
+    : 'Selected cluster count';
+  $('#kpiSil').textContent = score(d.kmeans_silhouette);
+  $('#kpiAri').textContent = d.ari.toFixed(3);
+  $('#dashChip').textContent = `k=${d.k_used}`;
+
+  const rows = d.kmeans_profile.map((p,i)=>{
+    const color = COLORS[i % COLORS.length];
+    const label = d.kmeans_cluster_labels[String(p.Cluster)] || '—';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border-soft)">
+      <span style="width:10px;height:10px;border-radius:50%;background:${color}"></span>
+      <span style="font-size:13px;font-weight:600">Cluster ${p.Cluster} · ${esc(label)}</span>
+      <span style="margin-left:auto;font-size:11.5px;color:var(--muted)">${p.Size} players · Ø runs ${num(p.Runs,0)} · Ø wickets ${num(p.Wickets,0)} · Ø SR ${num(p.StrikeRate,1)}</span>
+    </div>`;
+  }).join('');
+
+  $('#dashSummary').innerHTML = rows;
+}
+
+/* ---- PREPROCESSING ---- */
+function renderPreprocess(d){
+  const c = d.cleaning;
+  $('#cleanReport').innerHTML = `
+    <div class="stat-row"><span>Original rows</span><b>${c.original_rows}</b></div>
+    <div class="stat-row"><span>Duplicates removed</span><b style="color:var(--amber)">${c.duplicates_removed}</b></div>
+    <div class="stat-row"><span>Unusable rows dropped</span><b style="color:var(--amber)">${c.rows_dropped}</b></div>
+    <div class="stat-row"><span>Negative values handled</span><b style="color:var(--amber)">${c.negative_values_handled}</b></div>
+    <div class="stat-row"><span>Missing cells filled (median)</span><b style="color:var(--amber)">${c.missing_filled}</b></div>
+    <div class="stat-row"><span>Rows clustered</span><b style="color:var(--green)">${c.final_rows}</b></div>
+    <div style="margin-top:14px;font-size:11.5px;color:var(--muted);line-height:1.7">
+      <b style="color:var(--text-dim)">Cricket-aware rule:</b> blank <em>EconomyRate</em> with 0 <em>Wickets</em> = "did not bowl" — filled with 0, not the median.
+    </div>`;
+
+  const rows = d.scaling.map(r=>`
+    <tr>
+      <td><b>${esc(r.feature)}</b></td>
+      <td class="mono">${r.before_mean}</td>
+      <td class="mono">${r.before_std}</td>
+      <td class="mono" style="color:var(--green)">${r.after_mean}</td>
+      <td class="mono" style="color:var(--green)">${r.after_std}</td>
+    </tr>
+  `).join('');
+
+  $('#scaleReport').innerHTML = `
+    <table>
+      <thead><tr><th>Feature</th><th>Before mean</th><th>Before std</th><th>After mean</th><th>After std</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p style="font-size:11.5px;color:var(--muted);padding:12px 4px 0;line-height:1.7">After standardisation every column has mean ≈ 0 and std ≈ 1.</p>`;
+}
+
+/* ---- K-MEANS ---- */
+function renderKMeans(d){
+  const recommended = d.elbow_data.recommended_k;
+  $('#recommendedK').textContent = recommended
+    ? `Silhouette suggests k=${recommended}; use it as a starting point, not an automatic answer.`
+    : 'No valid silhouette score for the available partitions.';
+  $('#useRecommendedK').disabled = !recommended;
+  $('#elbowFrame').innerHTML = `
+    <img src="data:image/png;base64,${d.elbow_img}" alt="Elbow & Silhouette">
+    <div style="margin-top:8px;text-align:right">
+      <a class="btn" download="elbow_silhouette.png" href="data:image/png;base64,${d.elbow_img}">⬇ Save chart</a>
+    </div>`;
+
+  const rows = d.kmeans_profile.map(p=>{
+    const color = COLORS[p.Cluster % COLORS.length];
+    const label = d.kmeans_cluster_labels[String(p.Cluster)] || '—';
+    return `<tr>
+      <td><b style="color:${color}">●</b> ${p.Cluster}</td>
+      <td>${p.Size}</td>
+      ${FEATS.map(f=>`<td class="mono">${num(p[f])}</td>`).join('')}
+      <td><span class="chip" style="background:${color}22;color:${color};border-color:${color}55">${esc(label)}</span></td>
+    </tr>`;
+  }).join('');
+
+  $('#kmProfile').innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Cluster</th><th>Size</th>${FEATS.map(f=>`<th>${esc(f)}</th>`).join('')}<th>Label</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+
+  $('#kmInertia').textContent = d.kmeans_inertia;
+  $('#kmSil').textContent = score(d.kmeans_silhouette);
+  $('#kmSize').textContent = d.rows_used;
+}
+
+/* ---- HIERARCHICAL ---- */
+function renderHier(d){
+  $('#dendroFrame').innerHTML = `
+    <img src="data:image/png;base64,${d.dendro_img}" alt="Dendrogram">
+    <div style="margin-top:8px;text-align:right">
+      <a class="btn" download="dendrogram.png" href="data:image/png;base64,${d.dendro_img}">⬇ Save chart</a>
+    </div>`;
+
+  const rows = d.hier_profile.map(p=>{
+    const color = COLORS[p.Cluster % COLORS.length];
+    const label = d.hier_cluster_labels[String(p.Cluster)] || '—';
+    return `<tr>
+      <td><b style="color:${color}">●</b> ${p.Cluster}</td>
+      <td>${p.Size}</td>
+      ${FEATS.map(f=>`<td class="mono">${num(p[f])}</td>`).join('')}
+      <td><span class="chip" style="background:${color}22;color:${color};border-color:${color}55">${esc(label)}</span></td>
+    </tr>`;
+  }).join('');
+
+  $('#hierProfile').innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Cluster</th><th>Size</th>${FEATS.map(f=>`<th>${esc(f)}</th>`).join('')}<th>Label</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+/* ---- COMPARE ---- */
+function renderCompare(d){
+  $('#pcaFrame').innerHTML = `
+    <img src="data:image/png;base64,${d.pca_img}" alt="PCA scatter">
+    <div style="margin-top:8px;text-align:right">
+      <a class="btn" download="pca_scatter.png" href="data:image/png;base64,${d.pca_img}">⬇ Save chart</a>
+    </div>
+    <p style="font-size:11.5px;color:var(--muted);margin-top:10px;text-align:left">PC1: ${d.pca_explained[0]}% · PC2: ${d.pca_explained[1]}% of variance</p>`;
+
+  $('#ariBig').textContent = d.ari.toFixed(3);
+  $('#ariSentence').textContent = d.ari_sentence;
+  $('#ariKmInertia').textContent = d.kmeans_inertia;
+  $('#ariKmSil').textContent = score(d.kmeans_silhouette);
+  $('#ariHcSil').textContent = score(d.hier_silhouette);
+  $('#ariKmDb').textContent = score(d.kmeans_davies_bouldin);
+  $('#ariHcDb').textContent = score(d.hier_davies_bouldin);
+  $('#ariKmCh').textContent = score(d.kmeans_calinski_harabasz, 2);
+  $('#ariHcCh').textContent = score(d.hier_calinski_harabasz, 2);
+
+  const kLabels = Object.entries(d.kmeans_cluster_labels).sort((a,b)=>Number(a[0])-Number(b[0]));
+  const hLabels = Object.entries(d.hier_cluster_labels).sort((a,b)=>Number(a[0])-Number(b[0]));
+
+  $('#labelLogic').innerHTML = `
+    <p style="font-size:13px;color:var(--text-dim);line-height:1.8;margin-bottom:18px">${esc(d.label_logic)}</p>
+    <div class="grid g-2">
+      <div>
+        <h4 style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.9px;margin-bottom:10px">K-Means Labels</h4>
+        ${kLabels.map(([id,label])=>{
+          const color = COLORS[Number(id) % COLORS.length];
+          return `<div class="stat-row"><span>Cluster ${id}</span><b style="color:${color}">${esc(label)}</b></div>`;
+        }).join('')}
+      </div>
+      <div>
+        <h4 style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.9px;margin-bottom:10px">Hierarchical Labels</h4>
+        ${hLabels.map(([id,label])=>{
+          const color = COLORS[Number(id) % COLORS.length];
+          return `<div class="stat-row"><span>Cluster ${id}</span><b style="color:${color}">${esc(label)}</b></div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
+/* ---- REGISTRY ---- */
+function renderRegistry(d){
+  const rows = d.final_data || [];
+  if(!rows.length){
+    $('#regBody').innerHTML = `<tr><td><div class="empty">No data returned.</div></td></tr>`;
+    return;
+  }
+  const headers = Object.keys(rows[0]);
+  $('#registrySubtitle').textContent = `${rows.length} players with both cluster assignments`;
+
+  $('#regHead').innerHTML = headers.map(h=>`<th>${esc(h)}</th>`).join('');
+
+  // Populate filters
+  const kmLabels = [...new Set(rows.map(r=>r.KMeans_Label))].filter(Boolean).sort();
+  const hcLabels = [...new Set(rows.map(r=>r.Hierarchical_Label))].filter(Boolean).sort();
+  $('#filterKm').innerHTML = `<option value="">All K-Means labels</option>` + kmLabels.map(l=>`<option value="${esc(l)}">${esc(l)}</option>`).join('');
+  $('#filterHc').innerHTML = `<option value="">All Hierarchical labels</option>` + hcLabels.map(l=>`<option value="${esc(l)}">${esc(l)}</option>`).join('');
+
+  state._regRows = rows;
+  state._regHeaders = headers;
+  renderRegRows();
+}
+
+function renderRegRows(){
+  const rows = state._regRows || [];
+  const headers = state._regHeaders || [];
+  const f = state.filters;
+
+  let filtered = rows;
+  if(f.km) filtered = filtered.filter(r=>r.KMeans_Label===f.km);
+  if(f.hc) filtered = filtered.filter(r=>r.Hierarchical_Label===f.hc);
+  if(f.text){
+    const q = f.text.toLowerCase();
+    filtered = filtered.filter(r=>Object.values(r).some(v=>String(v).toLowerCase().includes(q)));
+  }
+
+  if(!filtered.length){
+    $('#regBody').innerHTML = `<tr><td colspan="${headers.length}"><div class="empty">No players match the filters.</div></td></tr>`;
+    return;
+  }
+
+  $('#regBody').innerHTML = filtered.map(r=>{
+    const cells = headers.map(h=>{
+      const v = r[h];
+      if(h==='KMeans_Label' || h==='Hierarchical_Label'){
+        const idx = h==='KMeans_Label' ? r.KMeans_Cluster : r.Hierarchical_Cluster;
+        const color = COLORS[Number(idx) % COLORS.length];
+        return `<td><span class="chip" style="background:${color}22;color:${color};border-color:${color}55">${esc(v)}</span></td>`;
+      }
+      const isNum = typeof v==='number';
+      return `<td class="${isNum?'mono':''}">${esc(isNum?num(v):v)}</td>`;
+    }).join('');
+    return `<tr>${cells}</tr>`;
+  }).join('');
+}
+
+$('#filterKm').addEventListener('change',e=>{ state.filters.km = e.target.value; renderRegRows(); });
+$('#filterHc').addEventListener('change',e=>{ state.filters.hc = e.target.value; renderRegRows(); });
+$('#filterText').addEventListener('input',e=>{ state.filters.text = e.target.value; renderRegRows(); });
+
+/* ============================================================================
+   INIT
+   ============================================================================ */
+go('dashboard');
+toast('ok','Ready','Go to Data Source to load a dataset.');
+</script>
+</body>
+</html>cd "C:\Sem - 4 projects\ML\player-clustering"
+venv\Scripts\Activate.ps1

@@ -1,0 +1,3 @@
+/* Intentionally minimal — main styles are inlined in templates/index.html
+   so the dashboard renders instantly without a second network request. */
+html { scroll-behavior: smooth; }
